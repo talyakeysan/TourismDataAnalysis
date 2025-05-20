@@ -218,19 +218,19 @@ for (col in targets) {
   log_res <- evaluate_model(log_model, test_data, target_col)
   results <- rbind(results, data.frame(Category = col, Model = "Logistic Regression", t(log_res)))
 
-  # ✅ Decision Tree
+  #  Decision Tree
   tree_model <- train(as.formula(paste(target_col, "~ TouristNumber + Total_Income + Year + Quarter")), 
                       data = train_data, method = "rpart")
   tree_res <- evaluate_model(tree_model, test_data, target_col)
   results <- rbind(results, data.frame(Category = col, Model = "Decision Tree", t(tree_res)))
   
-  # ✅ Random Forest
+  #  Random Forest
   rf_model <- randomForest(as.formula(paste(target_col, "~ TouristNumber + Total_Income + Year + Quarter")), 
                            data = train_data, ntree = 500)
   rf_res <- evaluate_model(rf_model, test_data, target_col)
   results <- rbind(results, data.frame(Category = col, Model = "Random Forest", t(rf_res)))
   
-  # ✅ XGBoost
+  #  XGBoost
   dtrain <- xgb.DMatrix(as.matrix(train_data[, c("TouristNumber", "Total_Income", "Year", "Quarter")]), 
                         label = as.numeric(train_data[[target_col]] == "High"))
   dtest <- xgb.DMatrix(as.matrix(test_data[, c("TouristNumber", "Total_Income", "Year", "Quarter")]))
@@ -239,20 +239,19 @@ for (col in targets) {
   xgb_res <- evaluate_model(xgb_model, test_data, target_col)
   results <- rbind(results, data.frame(Category = col, Model = "XGBoost", t(xgb_res)))
   
-  # ✅ Naive Bayes
+  #  Naive Bayes
   nb_model <- naiveBayes(as.formula(paste(target_col, "~ TouristNumber + Total_Income + Year + Quarter")), 
                          data = train_data)
   nb_res <- evaluate_model(nb_model, test_data, target_col)
   results <- rbind(results, data.frame(Category = col, Model = "Naive Bayes", t(nb_res)))
   
-  # ✅ KNN
+  #  KNN
   knn_model <- train(as.formula(paste(target_col, "~ TouristNumber + Total_Income + Year + Quarter")), 
                      data = train_data, method = "knn", tuneLength = 5)
   knn_res <- evaluate_model(knn_model, test_data, target_col)
   results <- rbind(results, data.frame(Category = col, Model = "KNN", t(knn_res)))
 }
 
-# ✅ Sonuçları Görüntüleme
 View(results)
 
 #### TEST VERİSİNDE TAHMİNLER
@@ -271,21 +270,21 @@ conf_matrix <- confusionMatrix(factor(log_pred, levels = c("Low", "High")),
 # Accuracy, Precision, Recall, F1-Score'ları Görüntüleme
 print(conf_matrix)
 
-# ✔️ Logistic Regression Modelini Eğitme
+#  Logistic Regression Modelini Eğitme
 log_model <- glm(Food_Beverage_Level ~ TouristNumber + Total_Income + Year + Quarter, 
                  data = train_data, family = "binomial")
 
-# ✔️ Gerçek Değerler
+#  Gerçek Değerler
 actuals <- test_data$Food_Beverage_Level
 
-# ✔️ Tahmin Sonuçlarını Test Verisine Ekleyelim
+#  Tahmin Sonuçlarını Test Verisine Ekleyelim
 test_data$Food_Beverage_Pred <- log_pred
 
-# ✔️ Confusion Matrix Hesaplama
+#  Confusion Matrix Hesaplama
 conf_matrix <- confusionMatrix(factor(log_pred, levels = c("Low", "High")), 
                                factor(test_data$Food_Beverage_Level, levels = c("Low", "High")))
 
-# ✔️ TP, TN, FP, FN Hesaplama ve DataFrame Olarak Gösterme
+#  TP, TN, FP, FN Hesaplama ve DataFrame Olarak Gösterme
 confusion_df <- data.frame(
   Actual_Low = c(conf_matrix$table[1, 1], conf_matrix$table[1, 2]),
   Actual_High = c(conf_matrix$table[2, 1], conf_matrix$table[2, 2])
@@ -307,7 +306,7 @@ performance_df <- data.frame(
 
 
 
-# 📊 Her Kategori için En Yüksek Doğruluğa Sahip Modeli Seçme
+#  Her Kategori için En Yüksek Doğruluğa Sahip Modeli Seçme
 best_models <- results %>%
   group_by(Category) %>%
   slice_max(Accuracy.Accuracy, n = 1, with_ties = FALSE) %>%
@@ -321,7 +320,7 @@ View(best_models)
 library(caret)  # Confusion matrix için gerekli
 library(dplyr)  # Verileri gruplamak için
 
-# ✅ Performans Sonuçları Tablosu
+#  Performans Sonuçları Tablosu
 all_predictions <- data.frame(Category = character(),
                               Actual = character(),
                               Predicted = character())
@@ -388,10 +387,9 @@ for (i in 1:nrow(best_models)) {
 }
 View(test_data) #### tüm veriler leveller ve predler dahil olan dataset
 
-# ✅ Sonuçları Görselleştirme
 View(all_predictions)
 
-# ✅ Confusion Matrices'i Görüntüleme
+# Confusion Matrices'i Görüntüleme
 confusion_matrices  # Her kategori için Confusion Matrix
 
 
