@@ -1,8 +1,5 @@
 ---
 title: "TOURISM DATA ANALYSIS AND PREDICTION"
-author: " 
-  Hafize Talya Keysan 2202940  
-  Bilge Nur Savaştürk 2202306 "
 output:
   word_document: default
   pdf_document:
