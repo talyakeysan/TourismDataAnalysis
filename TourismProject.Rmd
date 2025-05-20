@@ -1,0 +1,673 @@
+---
+title: "TOURISM DATA ANALYSIS AND PREDICTION"
+author: " 
+  Hafize Talya Keysan 2202940  
+  Bilge Nur Savaştürk 2202306 "
+output:
+  word_document: default
+  pdf_document:
+    latex_engine: xelatex
+---
+
+```{r message=FALSE, warning=FALSE}
+
+library(ggplot2)    
+library(randomForest)  # Random Forest algorithm for classification and regression
+library(xgboost)    # For Boosting algorithm
+library(e1071)      # For Naive Bayes algorithm
+library(pROC)       # Tools for ROC curve analysis and AUC calculation
+library(caret)      # For training models and creating confusion matrices
+library(dplyr)      # Data manipulation and grouping
+library(forecast)   # Time series forecasting and analysis
+
+```
+
+## [Introduction]{.underline}
+
+Tourism is a vital sector for many economies, providing significant revenue through various spending categories, including accommodation, food and beverage, health, and shopping. Understanding the relationship between tourist numbers and their expenditures can help policymakers, businesses, and stakeholders make informed decisions. This study focuses on analyzing and predicting tourism income and expenditure categories in Turkey, using historical data from 2002 to 2021. The analysis aims to explore the relationship between the number of tourists and various spending categories, predict the missing 2020_2 values (impacted by the COVID-19 pandemic), and classify expenditure categories into high and low levels using multiple machine learning models.
+
+## [About the Dataset]{.underline}
+
+We uploaded the tourism dataset, which contains quarterly data of tourist numbers and various expenditure categories in Turkey. The key columns of the dataset include:
+
+**Year and Quarter:** Indicating the time period of the data (e.g., 2020 Q1, 2020 Q2).
+
+**TouristNumber:** The total number of tourists arriving in Turkey during each quarter.
+
+**Total_Income:** The total tourism income for the respective period **(in thousands of dollars)**.
+
+-   **Food_Beverage:** Spending on food and beverages.
+-   **Accommodation:** Spending on lodging and hotels.
+-   **Health:** Spending on healthcare and wellness services.
+-   **Clothes:** Spending on clothing and accessories.
+-   **Carpet_Rug:** Spending on carpets and rugs, a popular souvenir item.
+-   **GSM_Expenditure:** Spending on mobile and communication services.
+-   **Souvenirs:** Spending on gifts and memorabilia.
+-   [**Ind_Expenditure (Individual Expenditures):**]{.underline} Spending by tourists who travel individually without using organized tours, package tours, or any organizations. These are personal expenses of tourists whose spendings cannot be tracked and categorized by official institutions, as they do not travel through any tour operators or travel agencies.
+
+We also examined the dataset for missing values (NA values) and began handling them systematically.
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE)
+data= read.csv("~/MLR_Project/TourismData.csv", sep = ";")
+head(data)
+tail(data,8)
+sum(is.na(data)) #checked the NA rows.
+
+```
+
+## [Data Preprocessing]{.underline}
+
+The dataset initially contains missing values (NA) in the row corresponding to 2020_Q2 (the pandemic period). We focused on filling these gaps in a meaningful way to enable accurate predictions for future quarters.
+
+### Separating the Data for Imputation
+
+We identified the row containing missing values for 2020_Q2 and isolated it for targeted imputation. This row (2020_2) contains missing values for several columns, and our goal is to estimate those values based on other available data.
+
+```{r}
+# Splitting the 2020_2 data for testing (like Leave-One-Out method)
+data_test = subset(data, TimeIndex == "2020_2")       
+data_train = subset(data, !(TimeIndex == "2020_2"))  
+
+data_train2 = data_train   
+data_test2 = data_test    
+
+# Convert Quarter and Year columns to factors and set their levels
+data_train2$Quarter <- factor(data_train2$Quarter)   
+data_train2$Year <- factor(data_train2$Year)        
+
+# Align factor levels of Quarter and Year in test data to match those in training data
+data_test2$Quarter <- factor(data_test2$Quarter, levels = levels(data_train2$Quarter))
+data_test2$Year <- factor(data_test2$Year, levels = levels(data_train2$Year))
+
+# Structure of the original test data
+str(data_test)
+
+# Structure of the adjusted test data with factor columns for categorical predictions
+str(data_test2)
+
+```
+
+### Exploring Advanced Models
+
+We tested other machine learning models, such as Linear Regression and Random Forests, but found the predicted values to be larger than expected. Upon recognizing that the data might be proportional, we shifted our approach.
+
+```{r}
+### Multiple Linear Regression with numeric predictors
+lm_model <- lm(Total_Income ~ TouristNumber + Year + Quarter, data = data_train)
+lm_pred <- predict(lm_model, newdata = data_test)
+
+### Multiple Linear Regression with categorical predictors
+lm_factor_model <- lm(Total_Income ~ TouristNumber + Year + Quarter, data = data_train2)
+lm_factor_pred <- predict(lm_factor_model, newdata = data_test2)
+
+### Random Forest model
+rf_model <- randomForest(Total_Income ~ TouristNumber + Year + Quarter, data = data_train2, ntree = 500)
+rf_pred <- predict(rf_model, newdata = data_test2)
+
+# Prediction results (Categorical MLR is the closest)
+cat(" Multiple Linear Model (Categorical) Prediction:", lm_factor_pred, "\n",
+    "Random Forest Prediction:", rf_pred, "\n",
+    "Multiple Linear Model (Numeric) Prediction:", lm_pred, "\n")
+
+```
+
+### Using Ratios for Imputation
+
+We found different predictions with Linear Regression and Random Forest, Multiple Linear Regression with categorical predictors brought more logical value parallel to tourist numbers but still was not realistic compared to other rows. So we basically decided to use a ratio of `Tourist_Number` to `Total_Income` from other years to impute the missing values for 2020_2. We calculated this rate and applied it to estimate the missing `Total_Income`.
+
+```{r}
+category_ratios <-data_train2$Total_Income / data_train2$TouristNumber
+
+data_test2$Total_Income <- data_test2$TouristNumber * mean(category_ratios)
+data_test2
+```
+
+### Imputing Expenditure Categories
+
+Once the `Total_Income` for 2020_2 was estimated, we proceeded to impute other expenditure categories using the proportional relationship between income and categories. We calculated shares of each categories and applied it to the missing values.
+
+```{r}
+input_features <- c("TouristNumber", "Total_Income")
+output_features <- c("Ind_Expenditure", "Food_Beverage", "Accommodation", "Health", "Clothes", "Carpet_Rug", "GSM_Expenditure", "Souvenirs")
+
+category_ratios = sapply(output_features, function(feature) {
+
+mean(data_train2[[feature]] / data_train2$Total_Income, na.rm = TRUE)})
+
+for (feature in output_features) {
+
+data_test2[[feature]] <- data_test2$Total_Income * category_ratios[feature]}
+data_test2
+```
+
+### Merging Imputed Data with Tourism Dataset
+
+After filling in the missing values, we merged the imputed `data_test2` with the rest of the dataset to create a complete non-null dataset for further analysis.
+
+```{r}
+targets2 <- c("Total_Income","Food_Beverage", "Accommodation", "Health", "Clothes", "Carpet_Rug", "GSM_Expenditure", "Souvenirs", "Ind_Expenditure")
+
+data_tourism = data 
+
+data_tourism[which(data_tourism$TimeIndex == "2020_2"),targets2] = data_test2[which(data_test2$TimeIndex == "2020_2"),targets2]
+
+tail(data_tourism,8)
+```
+
+## [Classification and Labeling]{.underline}
+
+### Labeling Expenditure Categories Using Z-Scores
+
+We used Z-scores to classify expenditure categories as "High" or "Low" based on their shares row by row to `Total_Income`. This allows us to identify which categories had above-average (high) or below-average (low) ratios(shares) and see which had more effect to total income and the changes over the years.
+
+```{r}
+#LABELING CATEGORIES AS HIGH/LOW BASED ON THEIR INCOME SHARES FOR EACH ROW
+
+# Define target categories for labeling
+targets <- c("Food_Beverage", "Accommodation", 
+             "Health", "Clothes", "Carpet_Rug", 
+             "GSM_Expenditure", "Souvenirs", "Ind_Expenditure")
+
+# Create a copy of the original data for labeling
+data_tourism_hl <- data_tourism
+
+# Labeling each category as "High" or "Low" based on its ratio to Total_Income
+for (col in targets) {
+  ratio_values <- data_tourism[[col]] / data_tourism$Total_Income
+  
+  # Calculate the mean and standard deviation of the ratios
+  mean_ratio <- mean(ratio_values, na.rm = TRUE)
+  sd_ratio <- sd(ratio_values, na.rm = TRUE)
+  
+  # Compute z-scores and label each row as "High" or "Low"
+  z_scores <- (ratio_values - mean_ratio) / sd_ratio
+  data_tourism_hl[[paste0(col, "_Level")]] <- ifelse(z_scores > 0, "High", "Low") 
+}
+
+selected_columns <- data_tourism_hl %>%
+  select(TimeIndex, Total_Income, 
+         Food_Beverage, Food_Beverage_Level,
+         Accommodation, Accommodation_Level,
+         Health, Health_Level,
+         Clothes, Clothes_Level,
+         Carpet_Rug, Carpet_Rug_Level,
+         GSM_Expenditure, GSM_Expenditure_Level,
+         Souvenirs, Souvenirs_Level,
+         Ind_Expenditure, Ind_Expenditure_Level)
+
+# Displaying the First Few Rows
+head(selected_columns)
+
+# Displaying the Last Few Rows
+tail(selected_columns, 7)
+
+
+```
+
+From the beginning to the end of the dataset, we can observe significant changes in the high-low labels of various categories.For instance, the share of **Health Expenditure**, which was initially labeled as "Low" in the early years, has gradually increased and is now labeled as "High" in recent years. However, **Carpet and Rug Expenditure**, which was labeled as "High" more in the early years, has shown a declining trend and mostly categorized as "Low" recently.
+
+These shifting labels reflect changing spending patterns over time. To better visualize these trends and make comparisons across categories, a line graph would provide a clearer representation of how each category's expenditure level has evolved, revealing trends and shifts in tourist spending behavior.
+
+```{r message=FALSE, warning=FALSE}
+category_shares = data_tourism |>
+  mutate(
+    Food_Beverage_Ratio = Food_Beverage / Total_Income,
+    Accommodation_Ratio = Accommodation / Total_Income,
+    Health_Ratio = Health / Total_Income,
+    Carpet_Ratio = Carpet_Rug / Total_Income,
+    Clothes_Ratio = Clothes / Total_Income,
+    Souvenirs_Ratio = Souvenirs / Total_Income,
+    GSM_Ratio = GSM_Expenditure / Total_Income,
+    Ind_Expenditure_Ratio = Ind_Expenditure / Total_Income)
+
+# Calculating yearly average ratios for each category
+category_ratios_yearly = category_shares |>
+  group_by(Year) |>
+  summarise(across(ends_with("_Ratio"), mean, na.rm = TRUE))
+
+
+# Grafik oluşturma
+ggplot(category_ratios_yearly, aes(x = Year)) +
+  geom_line(aes(y = Food_Beverage_Ratio, color = "Food & Beverage")) +
+  geom_line(aes(y = Accommodation_Ratio, color = "Accommodation")) +
+  geom_line(aes(y = Health_Ratio, color = "Health")) +
+  geom_line(aes(y = GSM_Ratio, color = "GSM Expenditure")) +
+  geom_line(aes(y = Carpet_Ratio, color = "Carpet & Rug")) +
+  geom_line(aes(y = Souvenirs_Ratio, color = "Souvenirs")) +
+  geom_line(aes(y = Clothes_Ratio, color = "Clothes")) +
+  labs(
+    title = "Yearly Shares of Expenditure Categories",
+    x = "Year",
+    y = "Average Ratio",
+    color = "Categories"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+-   In recent years, we can observe the **increase in the share of Clothes and Health categories** among tourists compared to other expenditure categories. This may show us the growing interest in Turkey's medical tourism and shopping tourism among visitors.
+
+## [Model Evaluation]{.underline}
+
+We split the complete dataset with labels into training and test sets. To predict the "high" and "low" labels for each category one by one, we [used 6 different models:]{.underline}
+
+-   **LOGISTIC REGRESSION**
+
+-   **DECISION TREE**
+
+-   **RANDOM FOREST**
+
+-   **BOOSTING**
+
+-   **NAIVE BAYES**
+
+-   **KNN**
+
+```{r}
+set.seed(1071)
+index <- createDataPartition(data_tourism_hl$Food_Beverage_Level, p = 0.7, list = FALSE)
+train_data <- data_tourism_hl[index, ]
+test_data <- data_tourism_hl[-index, ]
+```
+
+### Evaluating Model Performance
+
+We created an `evaluate_model` function to assess each model's performance using accuracy, precision, recall and F1-score. Among the tested models, the one with the highest accuracy was identified as the best-performing model.
+
+```{r}
+
+evaluate_model <- function(model, test_data, target) {
+  if (inherits(model, "train")) {
+    predictions <- predict(model, test_data, type = "raw")
+  } else if (inherits(model, "glm")) {
+    predictions <- ifelse(predict(model, test_data, type = "response") > 0.5, "High", "Low")
+  } else if (inherits(model, "randomForest")) {
+    predictions <- predict(model, test_data)
+  } else if (inherits(model, "xgb.Booster")) {
+    predictions <- ifelse(predict(model, as.matrix(test_data[, c("TouristNumber", "Total_Income", "Year", "Quarter")])) > 0.5, "High", "Low")
+  } else {
+    predictions <- predict(model, test_data)}
+  actuals <- test_data[[target]]
+  conf_matrix <- confusionMatrix(factor(predictions, levels = c("High", "Low")), 
+                                 factor(actuals, levels = c("High", "Low")))
+  
+  acc <- round(as.numeric(conf_matrix$overall["Accuracy"]), 4)
+  prec <- round(as.numeric(conf_matrix$byClass["Pos Pred Value"]), 4)
+  rec <- round(as.numeric(conf_matrix$byClass["Sensitivity"]), 4)
+  f1 <- round(2 * ((prec * rec) / (prec + rec)), 4)
+  
+  metrics <- c(Accuracy = acc, Precision = prec, Recall = rec, F1 = f1)
+  
+  return(metrics) }
+```
+
+### Model Accuracy Comparison
+
+Results for all categories and six models are combined into a single table to easily compare and identify the best-performing model.
+
+```{r}
+# Defined target categories to be predicted
+targets = c("Food_Beverage", "Accommodation", "Health", "Clothes", 
+             "Carpet_Rug", "GSM_Expenditure", "Souvenirs", "Ind_Expenditure")
+
+results = data.frame(Category = character(), Model = character(),Accuracy = numeric(),
+                     Precision = numeric(), Recall = numeric(), F1 = numeric())
+
+# Loop over each expenditure category
+for (col in targets) {
+  target_col <- paste0(col, "_Level")  
+  train_data[[target_col]] <- factor(train_data[[target_col]], levels = c("Low", "High"))
+  test_data[[target_col]] <- factor(test_data[[target_col]], levels = c("Low", "High"))
+  
+  ## Logistic Regression Model
+  log_model <- glm(as.formula(paste(target_col, "~ TouristNumber + Total_Income + Year + Quarter")), data = train_data, family = "binomial")
+  log_res <- evaluate_model(log_model, test_data, target_col)
+  results <- rbind(results, data.frame(Category = col, Model = "Logistic Reg", 
+                                       t(log_res)))
+
+  ## Decision Tree Model 
+  tree_model <- train(as.formula(paste(target_col, "~ TouristNumber + Total_Income + Year + Quarter")), data = train_data, method = "rpart")
+  tree_res <- evaluate_model(tree_model, test_data, target_col)
+  results <- rbind(results, data.frame(Category = col, Model = "Decision Tree", t(tree_res)))
+  
+  
+  ## Random Forest Model with 500 trees
+  rf_model <- randomForest(as.formula(paste(target_col, "~ TouristNumber + Total_Income + Year + Quarter")), data = train_data, ntree = 500)
+  rf_res <- evaluate_model(rf_model, test_data, target_col)
+  results <- rbind(results, data.frame(Category = col, Model = "Random Forest", t(rf_res)))
+  
+  
+  ## XGBoost Model for binary classification
+  dtrain <- xgb.DMatrix(as.matrix(train_data[, c("TouristNumber", "Total_Income", "Year", "Quarter")]), label = as.numeric(train_data[[target_col]] == "High"))
+  dtest <- xgb.DMatrix(as.matrix(test_data[, c("TouristNumber", "Total_Income", "Year", "Quarter")]))
+  xgb_model <- xgboost(data = dtrain, nrounds = 100, objective = "binary:logistic", 
+                       verbose = 0)
+  xgb_pred <- ifelse(predict(xgb_model, dtest) > 0.5, "High", "Low")
+  xgb_res <- evaluate_model(xgb_model, test_data, target_col)
+  results <- rbind(results, data.frame(Category = col, Model = "Boosting", t(xgb_res)))
+  
+  
+  ## Naive Bayes Model
+  nb_model <- naiveBayes(as.formula(paste(target_col, "~ TouristNumber + Total_Income + Year + Quarter")), data = train_data)
+  nb_res <- evaluate_model(nb_model, test_data, target_col)
+  results <- rbind(results, data.frame(Category = col, Model = "Naive Bayes", t(nb_res)))
+  
+  
+  ## K-Nearest Neighbors (KNN) Model
+  knn_model <- train(as.formula(paste(target_col, "~ TouristNumber + Total_Income + Year + Quarter")), data = train_data, method = "knn", tuneLength = 5)
+  knn_res <- evaluate_model(knn_model, test_data, target_col)
+  results <- rbind(results, data.frame(Category = col, Model = "KNN", t(knn_res))) }
+
+results
+```
+
+### Average Accuracies of Models Visualization
+
+This bar chart shows the average accuracy of each prediction model calculated over all expenditure categories. It helps to compare overall model performance and identify which models generally perform better.
+
+```{r}
+# Her modelin kategori bazlı accuracy ortalamasını hesapla
+model_averages <- results %>%
+  group_by(Model) %>%
+  summarise(Average_Accuracy = mean(Accuracy, na.rm = TRUE))
+
+# Grafiği oluştur
+ggplot(model_averages, aes(x = Model, y = Average_Accuracy, fill = Model)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  labs(title = "Average Accuracy of Each Model Across All Categories",
+       x = "Model",
+       y = "Average Accuracy") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_brewer(palette = "Set2") +
+  scale_y_continuous(breaks = seq(0, 1, by = 0.1))
+```
+
+### Trial Prediction Without Best Model Selection
+
+This code performs a trial prediction using a Logistic Regression model on the `Food_Beverage_Level` category without selecting the best model first. Our goal was to observe the model's performance before any model selection, achieving an accuracy of around 0.69.
+
+```{r}
+# Predicting on Test Data using Logistic Regression Model
+log_pred_prob <- predict(log_model, test_data, type = "response")  # Predicted probabilities
+log_pred <- ifelse(log_pred_prob > 0.5, "High", "Low")  # Convert probabilities to High/Low
+
+actuals <- test_data$Food_Beverage_Level
+conf_matrix <- confusionMatrix(factor(log_pred, levels = c("Low", "High")), 
+                               factor(actuals, levels = c("Low", "High")))
+print(conf_matrix)
+
+# Training Logistic Regression Model
+log_model <- glm(Food_Beverage_Level ~ TouristNumber + Total_Income + Year + Quarter, 
+                 data = train_data, family = "binomial")
+
+conf_matrix = confusionMatrix(factor(log_pred, levels = c("Low", "High")), 
+                              factor(test_data$Food_Beverage_Level, levels = c("Low", "High")))
+
+# Creating Confusion Matrix DataFrame
+confusion_df <- data.frame(
+  Actual_Low = c(conf_matrix$table[1, 1], conf_matrix$table[1, 2]),
+  Actual_High = c(conf_matrix$table[2, 1], conf_matrix$table[2, 2]))
+rownames(confusion_df) <- c("Predicted_Low", "Predicted_High")
+
+# Calculating Performance Metrics (Accuracy, Precision, Recall, F1-Score)
+performance_df <- data.frame(
+  Metric = c("Accuracy", "Precision", "Recall", "F1-Score"),
+  Value = c(round(conf_matrix$overall['Accuracy'], 4),
+    round(conf_matrix$byClass['Pos Pred Value'], 4),
+    round(conf_matrix$byClass['Sensitivity'], 4),
+    round(2 * ((conf_matrix$byClass['Pos Pred Value'] * conf_matrix$byClass['Sensitivity']) /
+          (conf_matrix$byClass['Pos Pred Value'] + conf_matrix$byClass['Sensitivity'])), 4))
+)
+
+```
+
+### Showing Best Models For All Expenditure Categories
+
+```{r}
+best_models = results |> 
+  group_by(Category) |>
+  slice_max(Accuracy, n = 1, with_ties = FALSE) |> ungroup() 
+
+best_models
+```
+
+### Confusion Matrix and Statistics for Each Category Using Best Models
+
+This code iterates through the best-performing models identified for each category to use them on the training data. It then makes predictions on the test data, stores those predictions in the test dataset, and calculates confusion matrices for detailed evaluation.
+
+```{r message=FALSE, warning=FALSE}
+
+# Performance Results and Predictions with Best Models
+
+all_predictions <- data.frame(Category = character(), Actual = character(),
+                              Predicted = character())
+
+confusion_matrices <- list()  # Store confusion matrices for each category
+
+for (i in 1:nrow(best_models)) {
+  category <- best_models$Category[i]
+  best_model <- best_models$Model[i]
+  target_col <- paste0(category, "_Level")
+  
+  # Train and predict using the best model for the current category
+  
+  if (best_model == "Logistic Reg") { model <- glm(as.formula(paste(target_col,"~ TouristNumber + Total_Income + Year + Quarter")), data = train_data, family = "binomial")
+    pred_probs <- predict(model, test_data, type = "response")
+    predictions <- ifelse(pred_probs > 0.5, "High", "Low")
+    
+  } else if (best_model == "Decision Tree") {
+    model <- train(as.formula(paste(target_col, "~ TouristNumber + Total_Income + Year + Quarter")),data = train_data, method = "rpart")
+    predictions <- predict(model, test_data)
+    
+  } else if (best_model == "Random Forest") {
+    model <- randomForest(as.formula(paste(target_col, "~ TouristNumber + Total_Income + Year + Quarter")),data = train_data, ntree = 500)
+    predictions <- predict(model, test_data)
+    
+  } else if (best_model == "Boosting") {
+    dtrain <- xgb.DMatrix(as.matrix(train_data[, c("TouristNumber", "Total_Income", "Year", "Quarter")]),label = as.numeric(train_data[[target_col]] == "High"))
+    dtest <- xgb.DMatrix(as.matrix(test_data[, c("TouristNumber", "Total_Income", "Year", "Quarter")]))
+    model <- xgboost(data = dtrain, nrounds = 100, objective = "binary:logistic", verbose = 0)
+    predictions <- ifelse(predict(model, dtest) > 0.5, "High", "Low")
+    
+  } else if (best_model == "Naive Bayes") {
+    model <- naiveBayes(as.formula(paste(target_col, "~ TouristNumber + Total_Income + Year + Quarter")),data = train_data)
+    predictions <- predict(model, test_data)
+    
+  } else if (best_model == "KNN") {
+    model <- train(as.formula(paste(target_col, "~ TouristNumber + Total_Income + Year + Quarter")),data = train_data, method = "knn", tuneLength = 5)
+    predictions <- predict(model, test_data)}
+  
+  # Add predictions to the test dataset
+  test_data[[paste0(category, "_Pred")]] <- predictions
+  
+  # Calculate and store confusion matrix
+  actuals <- test_data[[target_col]]
+  conf_matrix <- confusionMatrix(factor(predictions, levels = c("Low", "High")), 
+                                 factor(actuals, levels = c("Low", "High")))
+  confusion_matrices[[category]] <- conf_matrix
+  
+  # Append prediction results for all categories
+  all_predictions <- rbind(all_predictions, 
+                           data.frame(Category = category,
+                                      Actual = actuals,
+                                      Predicted = predictions))}
+
+# Test data with actual and predicted labels
+head(test_data, 8)
+
+# Confusion matrices for all categories
+confusion_matrices
+```
+
+## [Visualizations]{.underline}
+
+The visualizations were created using the **ggplot2** package, leveraging scatter plots and linear regression lines to analyze the relationship between the number of tourists visiting Turkey and their spendings across various categories.
+
+#### RELATIONSHIPS BETWEEN EXPENDITURES VS TOURIST NUMBERS
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# 1. Relationship Between Tourist Numbers and Total Income
+ggplot(data_tourism, aes(x = TouristNumber, y = Total_Income)) +
+  geom_point(color = "blue") +
+  geom_smooth(method = "lm", color = "red") +
+  labs(
+    title = "Tourist Numbers vs. Total Income", 
+    x = "Number of Tourists", 
+    y = "Total Income"
+  ) +
+  theme_minimal()
+
+
+# 2. Relationship Between Tourist Numbers and Food & Beverage Expenditure
+ggplot(data_tourism, aes(x = TouristNumber, y = Food_Beverage)) +
+  geom_point(aes(color = factor(Year))) +  # Year treated as factor for distinct colors
+  geom_smooth(method = "lm", color = "red") +
+  labs(
+    title = "Tourist Numbers vs. Food & Beverage", 
+    x = "Number of Tourists", 
+    y = "Food & Beverage Expenditure",
+    color = "Year"
+  ) +
+  theme_minimal()
+
+
+# 3. Relationship Between Tourist Numbers and Accommodation Expenditure
+ggplot(data_tourism, aes(x = TouristNumber, y = Accommodation)) +
+  geom_point(aes(color = factor(Year))) +
+  geom_smooth(method = "lm", color = "red") +
+  labs(
+    title = "Tourist Numbers vs. Accommodation", 
+    x = "Number of Tourists", 
+    y = "Accommodation Expenditure",
+    color = "Year"
+  ) +
+  theme_minimal()
+
+
+# 4. Relationship Between Tourist Numbers and Carpet & Rug Expenditure
+ggplot(data_tourism, aes(x = TouristNumber, y = Carpet_Rug)) +
+  geom_point(aes(color = factor(Year))) +
+  geom_smooth(method = "lm", color = "red") +
+  labs(
+    title = "Tourist Numbers vs. Carpet & Rug", 
+    x = "Number of Tourists", 
+    y = "Carpet & Rug Expenditure",
+    color = "Year"
+  ) +
+  theme_minimal()
+
+
+# 5. Relationship Between Tourist Numbers and GSM Expenditure
+ggplot(data_tourism, aes(x = TouristNumber, y = GSM_Expenditure)) +
+  geom_point(aes(color = factor(Year))) +
+  geom_smooth(method = "lm", color = "red") +
+  labs(
+    title = "Tourist Numbers vs. GSM Expenditure", 
+    x = "Number of Tourists", 
+    y = "GSM Expenditure",
+    color = "Year"
+  ) +
+  theme_minimal()
+
+```
+
+#### AVERAGE SHARES OF EACH CATEGORY IN TOTAL INCOME
+
+```{r}
+# Average Share of Each Category in Total Income (For Packaged Tours)
+categ_ratios = colMeans(data_tourism[, output_features] / data_tourism$Total_Income, na.rm = TRUE)
+category_ratios_df = data.frame(Category = names(categ_ratios), Ratio = categ_ratios)
+category_ratios_df = category_ratios_df[category_ratios_df$Category != "Ind_Expenditure", ]
+
+ggplot(category_ratios_df, aes(x = Category, y = Ratio, fill = Category)) +
+  geom_bar(stat = "identity") +
+  labs( title = "Average Share of Each Category (Packaged Tours)",
+    x = "Category", 
+    y = "Share in Total Income"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+#### **MODEL ACCURACY COMPARISON FOR EACH CATEGORY**
+
+```{r}
+# Visualizing Model Performance as a Bar Plot
+ggplot(results, aes(x = Category, y = Accuracy, fill = Model)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.8) +
+  labs(title = "Model Performance: Categorical Classification", 
+       x = "Category", 
+       y = "Accuracy") + 
+  scale_fill_brewer(palette = "RdYlBu") + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 10), panel.background = element_rect(fill = "#F5F5F5", color = NA)) 
+  
+```
+
+#### **TIME SERIES PLOT FOR TOURIST NUMBERS**
+
+```{r}
+# Creating a Date Column from Year and Quarter
+data_withdate <- data_tourism
+data_withdate$Date <- as.Date(paste(data_withdate$Year, (data_withdate$Quarter - 1) * 3 + 1, "01", sep = "-"))
+
+# Sorting by Date
+data_withdate <- data_withdate |> arrange(Date)
+
+# Time Series Plot: Tourist Numbers
+ggplot(data_withdate, aes(x = Date)) +
+  geom_line(aes(y = TouristNumber), color = "darkgreen", size = 1) + labs(title = "Time Series of Tourist Numbers", 
+       x = "Year", 
+       y = "Number of Tourists") +
+  theme_minimal()
+```
+
+#### SEASONAL (QUARTERLY) TOURISM INCOME DISTRIBUTION
+
+-   **Quarter 3 (July-September)** typically shows the **highest income**, corresponding to the summer tourist season in Turkey.
+
+-   **Quarter 1 (January-March)** tends to have the **lowest income**, consistent with the off-season for tourism.
+
+```{r}
+# Quarterly Boxplot of Tourism Income
+ggplot(data_withdate, aes(x = as.factor(Quarter), y = Total_Income, fill = as.factor(Quarter))) +
+  geom_boxplot() +
+  labs(title = "Tourism Income Distribution by Quarters", 
+       x = "Quarter", 
+       y = "Tourism Income (Thousand USD)") + theme_minimal()
+```
+
+#### SEASONAL AND TREND ANALYSIS OF TOURISM INCOME
+
+1.  **Trend:** The long-term movement in income over time. An **upward trend** is visible from the early years until 2019 but a **significant decline in 2020** is clearly visible, which aligns with the **COVID-19 pandemic.**
+
+2.  **Seasonality:** Regular patterns observed in income for each quarter.
+
+3.  **Residual:** Random fluctuations that are not explained by trend or seasonality. It provides insights into unexpected or irregular changes in income. Larger residual fluctuations in 2020 and 2021 indicate **higher unpredictability** due to the pandemic.
+
+```{r}
+# Creating a Time Series Object for Tourism Income
+income_ts <- ts(data_withdate$Total_Income, start = c(min(data_withdate$Year), min(data_withdate$Quarter)), frequency = 4)
+
+# Performing Seasonal and Trend Decomposition
+decomp <- stl(income_ts, s.window = "periodic")
+
+autoplot(decomp) + 
+  labs(title = "Seasonal and Trend Analysis of Tourism Income", 
+       x = "Time", y = "Tourism Income") + theme_minimal()
+```
+
+### [CONCLUSION]{.underline}
+
+In this study, we conducted a comprehensive analysis of the relationships between tourist numbers, total income, and tourism expenditure categories, considering the impacts of years and seasons in Turkey. Our analysis began with data preprocessing, where we addressed missing values using multiple imputation techniques, including **Linear Regression, Random Forest, and Mean/Median imputation**, ensuring the dataset's completeness and reliability.
+
+We further refined the data by calculating the share of each expenditure category in the total income, which enabled a more detailed understanding of spending patterns. Based on these shares, we created **"High" and "Low" labels** for each expenditure category using **Z-score normalization**, providing a categorical perspective on spending intensity.
+
+For predictive modeling, we employed six different algorithms: **Logistic Regression, Decision Tree, Random Forest, XGBoost, Naive Bayes, and K-Nearest Neighbors (KNN)**. The dataset was split into training and testing sets using sampling techniques to ensure robust model evaluation. Each model’s performance was assessed using metrics like **Accuracy, Precision, Recall, and F1-Score**, allowing a comprehensive comparison.
+
+To visualize the results, we generated multiple plots, including **time series graphs**, **category distribution plots**, and **model performance bar charts**, providing clear insights into spending trends, seasonal variations, and model effectiveness.
+
+Overall, this study provides a detailed understanding of the relationship between tourist numbers, seasonal total incomes and spending behavior changes in different categories, offering valuable insights for stakeholders in the tourism industry.
